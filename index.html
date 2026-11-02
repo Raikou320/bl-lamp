@@ -1,0 +1,192 @@
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raikou BLE Explorer</title>
+<style>
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  padding: 20px;
+  background: #111318;
+  color: #eee;
+  font-family: system-ui, sans-serif;
+}
+main {
+  max-width: 650px;
+  margin: auto;
+}
+h1 { color: #8ab4ff; }
+section {
+  background: #20232b;
+  padding: 16px;
+  margin: 14px 0;
+  border-radius: 12px;
+}
+button, input {
+  padding: 11px;
+  border: 0;
+  border-radius: 7px;
+  margin: 4px 0;
+}
+button {
+  background: #4169e1;
+  color: white;
+  cursor: pointer;
+}
+input {
+  background: #111318;
+  color: white;
+  border: 1px solid #555;
+  width: 100%;
+}
+#log {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: monospace;
+  font-size: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+</style>
+</head>
+<body>
+<main>
+<h1>Raikou BLE Explorer</h1>
+<p>ADEO ZBEK-36 · Firmware 2.12.05</p>
+
+<section>
+  <h3>Connexion</h3>
+  <button id="connect">Connecter RGB Smart Bulb</button>
+  <p id="status">Déconnecté</p>
+</section>
+
+<section>
+  <h3>Lecture A102</h3>
+  <button id="read">Lire A102</button>
+  <button id="notify">Activer notifications</button>
+  <p id="value">Valeur : --</p>
+</section>
+
+<section>
+  <h3>Écriture A101</h3>
+  <input id="hex" placeholder="Ex : 01 02 03">
+  <button id="write">Envoyer les octets</button>
+  <p>Écriture brute : utilise uniquement des commandes dont le format est identifié.</p>
+</section>
+
+<section>
+  <h3>Journal</h3>
+  <button id="clear">Effacer</button>
+  <div id="log"></div>
+</section>
+</main>
+
+<script>
+const SERVICE = "0000a100-1115-1000-0001-617573746f6d";
+const TX = "0000a101-1115-1000-0001-617573746f6d";
+const RX = "0000a102-1115-1000-0001-617573746f6d";
+
+let device, server, service, tx, rx;
+
+const $ = id => document.getElementById(id);
+
+function log(message) {
+  $("log").textContent +=
+    `[${new Date().toLocaleTimeString()}] ${message}\n`;
+  $("log").scrollTop = $("log").scrollHeight;
+}
+
+function hex(buffer) {
+  return [...new Uint8Array(buffer)]
+    .map(b => b.toString(16).padStart(2, "0").toUpperCase())
+    .join(" ");
+}
+
+$("connect").onclick = async () => {
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ name: "RGB smart bulb" }],
+      optionalServices: [SERVICE]
+    });
+
+    device.addEventListener("gattserverdisconnected", () => {
+      $("status").textContent = "Déconnecté";
+      log("Connexion perdue");
+    });
+
+    server = await device.gatt.connect();
+    service = await server.getPrimaryService(SERVICE);
+
+    tx = await service.getCharacteristic(TX);
+    rx = await service.getCharacteristic(RX);
+
+    $("status").textContent = "Connecté : " + device.name;
+    log("Connecté à " + device.name);
+    log("A101 : " + tx.properties.write);
+    log("A102 : READ=" + rx.properties.read +
+        " NOTIFY=" + rx.properties.notify);
+
+  } catch (error) {
+    log("Erreur : " + error);
+  }
+};
+
+$("read").onclick = async () => {
+  try {
+    const result = await rx.readValue();
+    $("value").textContent = "Valeur : " + hex(result.buffer);
+    log("RX READ : " + hex(result.buffer));
+  } catch (error) {
+    log("Erreur READ : " + error);
+  }
+};
+
+$("notify").onclick = async () => {
+  try {
+    await rx.startNotifications();
+
+    rx.addEventListener("characteristicvaluechanged", event => {
+      const data = hex(event.target.value.buffer);
+      $("value").textContent = "Valeur : " + data;
+      log("RX NOTIFY : " + data);
+    });
+
+    log("Notifications activées");
+  } catch (error) {
+    log("Erreur NOTIFY : " + error);
+  }
+};
+
+$("write").onclick = async () => {
+  try {
+    const input = $("hex").value.trim();
+
+    if (!/^(?:[0-9a-fA-F]{2})(?:\s+[0-9a-fA-F]{2})*$/.test(input)) {
+      throw new Error("Format hexadécimal invalide");
+    }
+
+    const bytes = new Uint8Array(
+      input.split(/\s+/).map(x => parseInt(x, 16))
+    );
+
+    await tx.writeValueWithResponse(bytes);
+    log("TX : " + hex(bytes));
+  } catch (error) {
+    log("Erreur WRITE : " + error);
+  }
+};
+
+$("clear").onclick = () => $("log").textContent = "";
+
+if (!navigator.bluetooth) {
+  $("status").textContent =
+    "Web Bluetooth indisponible dans ce navigateur";
+}
+</script>
+</body>
+</html>
